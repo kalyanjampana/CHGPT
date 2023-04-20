@@ -2,13 +2,14 @@ import gradio as gr
 import configparser
 import requests
 import json
-import pandas as pd
+import pickle
 from base64 import b64encode
 import fitz
 import os
 import pytesseract
 import numpy as np
 from langchain import OpenAI
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
 from langchain.chains.summarize import load_summarize_chain
@@ -19,7 +20,7 @@ config.read('config.ini')
 chkey = config['chapi']['CH_API_KEY']
 token = b64encode(f"{chkey}".encode('utf-8')).decode("ascii")
 #os.environ["TESSDATA_PREFIX"] = "/Users/kalyan/tesseract/tessdata/"
-os.environ["OPENAI_API_KEY"] = config['openai']['OPENAI_API_KEY']
+#os.environ["OPENAI_API_KEY"] = config['openai']['OPENAI_API_KEY']
 
 with gr.Blocks(gr.themes.Soft()) as demo:
     # Create input Text search box
@@ -42,6 +43,9 @@ with gr.Blocks(gr.themes.Soft()) as demo:
     # Text box Display the Document information
     display_filing_doc_info = gr.Textbox(label="",interactive=False, visible=False)
 
+    # OpenAPI Key Input box
+    openapi_key_input = gr.Textbox(label="OpenAI API Key",interactive=True, visible=False)
+
     # Button to initiate the processing of the Document - OPENAI Call initiated here too
     process_filing_btn = gr.Button("Summarize the Account filing", visible=False)
 
@@ -50,6 +54,9 @@ with gr.Blocks(gr.themes.Soft()) as demo:
 
     # Final Text box to display the summary of the Annual Accounts
     summary_text = gr.Textbox(label="Summary using OPENAI",interactive=False, visible=False)
+
+    # Clear all fields to start again
+    clear = gr.Button("Clear")
 
     # Function that does the Company search based on a search string. Gets the top 10 results 
     def company_search(text):
@@ -123,19 +130,22 @@ with gr.Blocks(gr.themes.Soft()) as demo:
             pdf_document = fitz.open(filepath)
             resp_value += f'PDF saved as: {filename}. There are a total of {pdf_document.page_count} pages'
             print(resp_value)
-            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=True), processed_info: gr.update(visible=True), doc_id : docid}
+            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=True), openapi_key_input: gr.update(visible=True), processed_info: gr.update(visible=True), doc_id : docid}
         elif content_type == 'application/xhtml+xml':
             print('Work in progress to process these type of filings')
             resp_value += 'Work in progress to process these type of filings'
-            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=False), processed_info: gr.update(visible=False), doc_id : "None"}
+            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=False), openapi_key_input: gr.update(visible=False), processed_info: gr.update(visible=False), doc_id : "None"}
         else:
             print('Work in progress to process these type of filings')
             resp_value += 'Work in progress to process these type of filings'
-            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=False), processed_info: gr.update(visible=False), doc_id : "None"}
+            return {display_filing_doc_info: gr.Textbox.update(visible=True, value=resp_value), process_filing_btn: gr.update(visible=False), openapi_key_input: gr.update(visible=False), processed_info: gr.update(visible=False), doc_id : "None"}
 
     # Function to initial the Langchain chain with call to OPENAI to Summarize the Annual report
-    def langchain_summarize(contents):
-        prompt_template = """You are a financial analyst, analyzing the Annual financial accounts submitted by limited companies in the UK. Write a concise summary of the following:
+    def langchain_summarize(contents,openai_api_key):
+        concatenated_content = '`n`n'.join(contents)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200,chunk_overlap=20,length_function=len)
+        docs = text_splitter.create_documents([concatenated_content])
+        prompt_template = """You are a financial analyst, analyzing the Annual report submitted by the limited company at UK Companies House. Write a concise summary of the following report:
 
 
         {text}
@@ -143,50 +153,68 @@ with gr.Blocks(gr.themes.Soft()) as demo:
         
         CONCISE SUMMARY:"""
         PROMPT = PromptTemplate(template=prompt_template, input_variables=["text"])
-        llm = OpenAI(temperature=0)
-        docs = [Document(page_content=t) for t in contents]
+        llm = OpenAI(temperature=0, openai_api_key=openai_api_key)
+        #docs = [Document(page_content=t) for t in contents]
         chain = load_summarize_chain(llm, chain_type="map_reduce", map_prompt=PROMPT, combine_prompt=PROMPT)
         with get_openai_callback() as cb:
             resp = chain.run(docs)
-            print(f'*** Spent a total of {cb.total_tokens} tokens ***')
-        return resp
+            tkn_text = f'*** Spent a total of {cb.total_tokens} tokens ***'
+        return resp, tkn_text
 
     # Function to extract text from the document and call the LangChain processing function with the text array of pages
-    def process_filing(docid, progress=gr.Progress()):
+    def process_filing(docid, openai_api_key, progress=gr.Progress()):
         progress(0,desc="Starting...")
         filepath = f'./data/doc_{docid}.pdf'
         pdf_document = fitz.open(filepath)
-        zoom_x = 2.0  # horizontal zoom
-        zoom_y = 2.0  # vertical zoom
-        mat = fitz.Matrix(zoom_x, zoom_y)  # zoom factor 2 in each dimension
-        contents = []
-        i=0
-        for page in progress.tqdm(pdf_document, desc="Processing pages from PDF..."):
-            # Convert the page to a PNG image using PyMuPDF
-            pix = page.get_pixmap(matrix=mat)
-            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height,pix.width, pix.n)
-            texts = pytesseract.image_to_string(img)
-            contents.append(texts)
-            i+=1
+        text_path = f'./text/doc_{docid}.pkl'
+        if os.path.exists(text_path):
+            # retrieve list from file
+            with open(text_path, 'rb') as f:
+                contents = pickle.load(f)
+        else:
+            zoom_x = 2.0  # horizontal zoom
+            zoom_y = 2.0  # vertical zoom
+            mat = fitz.Matrix(zoom_x, zoom_y)  # zoom factor 2 in each dimension
+            contents = []
+            for page in progress.tqdm(pdf_document, desc="Processing pages from PDF..."):
+                # Convert the page to a PNG image using PyMuPDF
+                pix = page.get_pixmap(matrix=mat)
+                img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height,pix.width, pix.n)
+                texts = pytesseract.image_to_string(img)
+                contents.append(texts)
+            # save list to file
+            with open(text_path, 'wb') as f:
+                pickle.dump(contents, f)
         #print(contents)
-        resp_value = f'Total of {pdf_document.page_count} pages processed'
+        resp_value = f'Total of {pdf_document.page_count} pages processed. '
         summary_path = f'./summary/doc_{docid}.txt'
         if os.path.exists(summary_path):
             with open(summary_path, 'r') as f:
                 summary = f.read()
+            print(resp_value)
+            return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=True, value=summary)}
         else:
             #progress(track_tqdm=True,desc="Calling OpenAI to summarize...")
-            summary = langchain_summarize(contents)
-            with open(summary_path, 'wb') as f:
-                f.write(summary.encode())
-        print(resp_value)
-
-        return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=True, value=summary)}
+            try:
+                summary, tkn_text = langchain_summarize(contents, openai_api_key)
+                resp_value += tkn_text
+                with open(summary_path, 'wb') as f:
+                    f.write(summary.encode())
+                return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=True, value=summary)}
+            except Exception as e:
+                resp_value += 'LLM Call failed. Please check the OpenAI key again'
+                return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=False)}
+            finally:
+                print(resp_value)
+    
+    def clear_screen():
+        return {output_col: gr.update(visible=False),display_filing: gr.Textbox.update(visible=False),submit_btn: gr.update(visible=False), display_filing_doc_info:gr.update(visible=False), process_filing_btn:gr.update(visible=False),openapi_key_input:gr.update(visible=False),processed_info:gr.update(visible=False),summary_text:gr.update(visible=False)}
 
     search_btn.click(company_search,input_box,[company_list_box,output_col])
     company_list_box.change(company_selected,[company_list_box, doc_id],[display_filing, submit_btn, doc_id])
-    submit_btn.click(get_filing,doc_id,[display_filing_doc_info, process_filing_btn, processed_info, doc_id])
-    process_filing_btn.click(process_filing,doc_id,[processed_info,summary_text])
+    submit_btn.click(get_filing,doc_id,[display_filing_doc_info, process_filing_btn, openapi_key_input, processed_info, doc_id])
+    process_filing_btn.click(process_filing,[doc_id,openapi_key_input],[processed_info,summary_text])
+    clear.click(clear_screen, None, [output_col,display_filing,submit_btn,display_filing_doc_info,process_filing_btn,openapi_key_input,processed_info,summary_text])
 
 demo.queue(concurrency_count=2)
 demo.launch()   

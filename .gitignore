@@ -2,6 +2,7 @@ chgpt/config.ini
 data/
 summary/
 flagged/
+text/
 chgpt/test.ipynb
 chgpt/test_lang.ipynb
 chgpt/pdfread.ipynb
