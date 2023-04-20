@@ -1,0 +1,6 @@
+gradio>=3.27
+langchain>=0.0.143
+pandas>=2.0.0
+pytesseract>=0.3.10
+pymupdf>=1.22.1
+tiktoken>=0.3.3
