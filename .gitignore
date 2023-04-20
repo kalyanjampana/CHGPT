@@ -1,0 +1,9 @@
+chgpt/config.ini
+data/
+summary/
+flagged/
+chgpt/test.ipynb
+chgpt/test_lang.ipynb
+chgpt/pdfread.ipynb
+.DS_Store
+chgpt/__pycache__/app.cpython-311.pyc
