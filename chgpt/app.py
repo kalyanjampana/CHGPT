@@ -11,7 +11,6 @@ import numpy as np
 from langchain import OpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import PromptTemplate
-from langchain.docstore.document import Document
 from langchain.chains.summarize import load_summarize_chain
 from langchain.callbacks import get_openai_callback
 
