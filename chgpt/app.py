@@ -43,7 +43,7 @@ with gr.Blocks(gr.themes.Soft()) as demo:
     display_filing_doc_info = gr.Textbox(label="",interactive=False, visible=False)
 
     # OpenAPI Key Input box
-    openapi_key_input = gr.Textbox(label="OpenAI API Key",interactive=True, visible=False)
+    openapi_key_input = gr.Textbox(label="OpenAI API Key", type='password', interactive=True, visible=False)
 
     # Button to initiate the processing of the Document - OPENAI Call initiated here too
     process_filing_btn = gr.Button("Summarize the Account filing", visible=False)
@@ -114,7 +114,8 @@ with gr.Blocks(gr.themes.Soft()) as demo:
         auth = f'Basic {token}'
         payload={}
         headers = {
-            'Authorization': auth
+            'Authorization': auth,
+            'Accept': 'application/pdf'
         }
         response = requests.request("GET", doc_url, headers=headers, data=payload)
         #print(response.text)
@@ -201,6 +202,7 @@ with gr.Blocks(gr.themes.Soft()) as demo:
                     f.write(summary.encode())
                 return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=True, value=summary)}
             except Exception as e:
+                print(e)
                 resp_value += 'LLM Call failed. Please check the OpenAI key again'
                 return {processed_info: gr.Textbox.update(visible=True, value=resp_value), summary_text: gr.Textbox.update(visible=False)}
             finally:
